@@ -833,8 +833,32 @@ int em_capability_t::handle_client_cap_report(unsigned char *buff, unsigned int 
                 return -1;
             }
             sta_info.associated = true;
-            sta_info.frame_body_len = static_cast<unsigned int>(htons(tlv->len) - 1);
-            memcpy(sta_info.frame_body, &tlv->value[1], static_cast<size_t>(sta_info.frame_body_len));
+            unsigned int tlv_len = static_cast<unsigned int>(htons(tlv->len));
+            /* TLV must contain at least the result-code byte */
+            if (tlv_len < 1) {
+                em_printfout("%s:%d Invalid client capability report length %u",
+                            __func__, __LINE__, tlv_len);
+                return -1;
+            }
+
+            /* Verify TLV fits within remaining message buffer */
+            if (((sizeof(em_tlv_t)) + tlv_len) > tmp_len) {
+                em_printfout("%s:%d TLV length %u exceeds remaining buffer %u",
+                        __func__, __LINE__, tlv_len, tmp_len);
+                return -1;
+            }
+
+            /* Verify TLV fits within remaining message buffer */
+            size_t copy_len = tlv_len - 1;
+            if (copy_len > sizeof(sta_info.frame_body)) {
+                em_printfout("%s:%d Frame body length %zu exceeds max %zu",
+                            __func__, __LINE__,
+                            copy_len, sizeof(sta_info.frame_body));
+                return -1;
+            }
+
+            sta_info.frame_body_len = static_cast<unsigned int>(copy_len);
+            memcpy(sta_info.frame_body, &tlv->value[1], copy_len);
 
             found_cap_report = true;
             break;
