@@ -1719,17 +1719,43 @@ int em_channel_t::handle_channel_pref_tlv_ctrl(unsigned char *buff, unsigned int
 
     // Parse the received TLV
     unsigned char *ptr = reinterpret_cast<unsigned char *>(pref->op_classes);
-    for (i = 0; i < pref->op_classes_num && (i < EM_MAX_OP_CLASS); i++) {
+    if (pref->op_classes_num > EM_MAX_OP_CLASS) {
+        em_printfout("%s:%d Invalid op class count %u (max=%u)",
+                    __func__, __LINE__,
+                    pref->op_classes_num,
+                    EM_MAX_OP_CLASS);
+        return -1;
+    }
+    for (i = 0; i < pref->op_classes_num; i++) {
         em_channel_pref_op_class_t *op_class_hdr = reinterpret_cast<em_channel_pref_op_class_t *>(ptr);
         memset(&op_class_info[i], 0, sizeof(em_op_class_info_t));
         memcpy(op_class_info[i].id.ruid, pref->ruid, sizeof(mac_address_t));
         op_class_info[i].id.type = em_op_class_type_preference;
         op_class_info[i].op_class = static_cast<unsigned int>(op_class_hdr->op_class);
         op_class_info[i].id.op_class = op_class_info[i].op_class;
+        if (op_class_hdr->num > EM_MAX_CHANNELS_IN_LIST) {
+            em_printfout("%s:%d Invalid channel count %u (max=%u)",
+                        __func__, __LINE__,
+                        op_class_hdr->num,
+                        EM_MAX_CHANNELS_IN_LIST);
+            return -1;
+        }
         op_class_info[i].num_channels = static_cast<unsigned int>(op_class_hdr->num);
 
         unsigned char *chan_ptr = ptr + sizeof(em_channel_pref_op_class_t);
         unsigned char *pref_bits_ptr = ptr + sizeof(em_channel_pref_op_class_t) + op_class_info[i].num_channels;
+
+        if ((chan_ptr + op_class_info[i].num_channels) > (buff + len)) {
+            em_printfout("%s:%d Channel list exceeds TLV boundary",
+                        __func__, __LINE__);
+            return -1;
+        }
+
+        if ((pref_bits_ptr + op_class_info[i].num_channels) > (buff + len)) {
+            em_printfout("%s:%d Preference list exceeds TLV boundary",
+                        __func__, __LINE__);
+            return -1;
+        }
 
         for (j = 0; j < op_class_info[i].num_channels; j++) {
             op_class_info[i].channels[j] = *chan_ptr;
