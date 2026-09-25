@@ -2958,6 +2958,11 @@ unsigned short em_configuration_t::create_m2_msg(unsigned char *buff, em_haul_ty
     
     len += static_cast<unsigned short int> (sizeof(data_elem_attr_t) + size);
     tmp += (sizeof(data_elem_attr_t) + size);
+    if (len > sizeof(m_m2_msg)) {
+        em_printfout("%s:%d M2 length exceeds buffer (%u > %zu)",
+            __func__, __LINE__, len, sizeof(m_m2_msg));
+        return 0;
+    }
     m_m2_length = len;
     memcpy(m_m2_msg, buff, m_m2_length);
     // authenticator
@@ -4095,6 +4100,11 @@ int em_configuration_t::create_autoconfig_wsc_m1_msg(unsigned char *buff, unsign
     tmp += (sizeof(em_tlv_t) + sz);
     len += static_cast<int> (sizeof(em_tlv_t) + sz);
 
+    if (sz > sizeof(m_m1_msg)) {
+        em_printfout("%s:%d M1 length exceeds buffer (%u > %zu)",
+            __func__, __LINE__, sz, sizeof(m_m1_msg));
+        return 0;
+    }
     m_m1_length = sz;
     memcpy(m_m1_msg, const_cast<unsigned char *> (tlv->value), m_m1_length);
     
@@ -4346,6 +4356,11 @@ int em_configuration_t::handle_wsc_m2(unsigned char *buff, unsigned int len, uns
 
     em_printfout("Parsing m2 message, index: %d, len: %d", index, len);
 
+    if ((len < 12) || ((len - 12) > sizeof(m_m2_msg))) {
+        em_printfout("%s:%d M2 length exceeds buffer (%u > %zu)",
+            __func__, __LINE__, len, sizeof(m_m2_msg));
+        return 0;
+    }
     m_m2_length = len - 12;
     memcpy(m_m2_msg, buff, m_m2_length);
     
@@ -4409,6 +4424,11 @@ int em_configuration_t::handle_wsc_m1(unsigned char *buff, unsigned int len)
 		printf("%s:%d Failed to find the radio\n", __func__, __LINE__);
 		return -1;
 	}
+    if (len > sizeof(m_m1_msg)) {
+        em_printfout("%s:%d M1 length exceeds buffer (%u > %zu)",
+            __func__, __LINE__, len, sizeof(m_m1_msg));
+        return 0;
+    }
     m_m1_length = len;
     memcpy(m_m1_msg, buff, m_m1_length);
     
