@@ -4356,19 +4356,42 @@ int em_configuration_t::handle_wsc_m2(unsigned char *buff, unsigned int len, uns
 
     em_printfout("Parsing m2 message, index: %d, len: %d", index, len);
 
+    /* Validate haul type index */
+    if (index >= em_haul_type_max) {
+        em_printfout("%s:%d Invalid haul index %u",
+                     __func__, __LINE__, index);
+        return -1;
+    }
+
     if ((len < 12) || ((len - 12) > sizeof(m_m2_msg))) {
         em_printfout("%s:%d M2 length exceeds buffer (%u > %zu)",
-            __func__, __LINE__, len, sizeof(m_m2_msg));
-        return 0;
+                    __func__, __LINE__, len, sizeof(m_m2_msg));
+        return -1;
     }
+
     m_m2_length = len - 12;
     memcpy(m_m2_msg, buff, m_m2_length);
     
     attr = reinterpret_cast<data_elem_attr_t *> (buff); tmp_len = len;
 
-    while (tmp_len > 0) {
+    while (tmp_len >= sizeof(data_elem_attr_t)) {
+
+        unsigned int attr_len;
+        unsigned int elem_size;
 
         id = htons(attr->id);
+        attr_len = static_cast<unsigned int>(htons(attr->len));
+        if (attr_len > (tmp_len - sizeof(data_elem_attr_t))) {
+            em_printfout("%s:%d Invalid attribute length %u "
+                        "(remaining payload=%u)",
+                        __func__, __LINE__,
+                        attr_len,
+                        tmp_len - static_cast<unsigned int>(sizeof(data_elem_attr_t)));
+            return -1;
+        }
+
+        elem_size = static_cast<unsigned int>(
+                        sizeof(data_elem_attr_t) + attr_len);
 
         if (id == attr_id_version) {
         } else if (id == attr_id_msg_type) {
@@ -4376,19 +4399,47 @@ int em_configuration_t::handle_wsc_m2(unsigned char *buff, unsigned int len, uns
                 return -1;
             }
         } else if (id == attr_id_registrar_nonce) {
-            set_r_nonce(attr->val, htons(attr->len));
+            set_r_nonce(attr->val, attr_len);
         } else if (id == attr_id_public_key) {
-            set_r_public(attr->val, htons(attr->len));
+            set_r_public(attr->val, attr_len);
         } else if (id == attr_id_encrypted_settings) {
-            memcpy(&m_m2_encrypted_settings[index][0], attr->val, htons(attr->len));
-            m_m2_encrypted_settings_len[index] = htons(attr->len);
-            //em_printfout("Copied encrypted setting[%d] len:%d", index, htons(attr->len));
+            /* encrypted_settings destination buffer bounds */
+            if (attr_len > MAX_EM_BUFF_SZ) {
+                em_printfout("%s:%d encrypted_settings too large "
+                             "(%u > %u)",
+                             __func__, __LINE__,
+                             attr_len, MAX_EM_BUFF_SZ);
+                return -1;
+            }
+
+            memcpy(&m_m2_encrypted_settings[index][0], attr->val, attr_len);
+            m_m2_encrypted_settings_len[index] = attr_len;
+            //em_printfout("Copied encrypted setting[%d] len:%d", index, attr_len);
         } else if (id == attr_id_authenticator) {
-            memcpy(m_m2_authenticator[index], attr->val, htons(attr->len));
+            /*
+             * Replace AUTHENTICATOR_LEN with the actual
+             * destination size.
+             */
+            if (attr_len > sizeof(m_m2_authenticator[index])) {
+                em_printfout("%s:%d authenticator too large "
+                             "(%u > %zu)",
+                             __func__, __LINE__,
+                             attr_len,
+                             sizeof(m_m2_authenticator[index]));
+                return -1;
+            }
+
+            memcpy(m_m2_authenticator[index], attr->val, attr_len);
         }
 
-        tmp_len -= static_cast<unsigned int> (sizeof(data_elem_attr_t) + htons(attr->len));
-        attr = reinterpret_cast<data_elem_attr_t *>(reinterpret_cast<unsigned char *> (attr) + sizeof(data_elem_attr_t) + htons(attr->len));
+        tmp_len -= elem_size;
+        attr = reinterpret_cast<data_elem_attr_t *>(reinterpret_cast<unsigned char *> (attr) + elem_size);
+    }
+
+    if (tmp_len != 0) {
+        em_printfout("%s:%d Trailing incomplete attribute (%u bytes)",
+                    __func__, __LINE__, tmp_len);
+        return -1;
     }
 
     return ret;
