@@ -4712,15 +4712,28 @@ int em_configuration_t::handle_encrypted_settings(unsigned int wsc_tlv_count)
                 em_printfout("##ssid attrib[%d]: %s", wsc_index, radioconfig.ssid[wsc_index]);
                 memcpy(radioconfig.radio_mac[wsc_index], get_radio_interface_mac(), sizeof(mac_address_t));
             } else if (id == attr_id_auth_type) {
-                memcpy(reinterpret_cast<char *> (&auth_type), reinterpret_cast<unsigned char *> (attr->val), htons(attr->len));
+                unsigned short attr_len = htons(attr->len);
+                if (attr_len != sizeof(auth_type)) {
+                    em_printfout("%s:%d Invalid auth_type length %u",
+                                __func__, __LINE__, attr_len);
+                    return -1;
+                }
+                memcpy(reinterpret_cast<char *> (&auth_type), reinterpret_cast<unsigned char *> (attr->val), attr_len);
                 auth_type = ntohs(auth_type);
                 radioconfig.authtype[wsc_index] = static_cast<unsigned int>(auth_type);
                 em_printfout("##authtype[%d]: %x", wsc_index, radioconfig.authtype[wsc_index]);
             } else if (id == attr_id_encryption_type) {
                 em_printfout("##encr type attrib for wsc_index:%d", wsc_index);
             } else if (id == attr_id_network_key) {
-                memcpy(pass, attr->val, htons(attr->len));
-                memcpy(radioconfig.password[wsc_index], attr->val, htons(attr->len));
+                unsigned short attr_len = htons(attr->len);
+                if ((attr_len >= sizeof(pass)) ||
+                    (attr_len >= sizeof(radioconfig.password[wsc_index]))) {
+                    em_printfout("%s:%d Invalid network key length %u",
+                                __func__, __LINE__, attr_len);
+                    return -1;
+                }
+                memcpy(pass, attr->val, attr_len);
+                memcpy(radioconfig.password[wsc_index], attr->val, attr_len);
                 em_printfout("##network key[%d]: %s", wsc_index, pass);
             } else if (id == attr_id_mac_address) {
                 memcpy(radioconfig.radio_mac[wsc_index], attr->val, sizeof(mac_address_t));
