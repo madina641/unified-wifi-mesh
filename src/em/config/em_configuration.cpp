@@ -4948,7 +4948,12 @@ int em_configuration_t::handle_bss_config_req_msg(uint8_t *buff, unsigned int le
         switch (tlv->type) {
             case em_tlv_type_profile:
                 em_printfout("Processing Multi-AP Profile TLV");
-                memcpy(&profile, tlv->value, ntohs(tlv->len));
+                uint16_t profile_len = ntohs(tlv->len);
+                if (profile_len != sizeof(em_profile_type_t)) {
+                    em_printfout("Invalid Profile TLV length: %u", profile_len);
+                    return -1;
+                }
+                memcpy(&profile, tlv->value, sizeof(profile));
                 break;
             case em_tlv_type_supported_service:
                 em_printfout("Processing Supported Service TLV");
