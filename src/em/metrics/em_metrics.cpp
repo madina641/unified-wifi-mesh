@@ -864,6 +864,11 @@ int em_metrics_t::handle_link_stats_alarm_rprt_tlv(unsigned char *buff, size_t l
     em_vendor_specific_t *vendor_data = reinterpret_cast<em_vendor_specific_t *> (tmp);
     em_printfout("vendor_data->num count [%d]", vendor_data->num);
 
+    if (memcmp(vendor_data->vendor_oui, em_vendor_oui, EM_VENDOR_OUI_SIZE) != 0) {
+        em_printfout("Unexpected vendor OUI");
+        return -1;
+    }
+
     em_vendor_data_t *vendor_data_ptr = vendor_data->data;
     em_printfout("vendor_data->attri [%d]", vendor_data_ptr->attr_id);
 
