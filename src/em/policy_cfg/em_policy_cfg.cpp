@@ -745,6 +745,17 @@ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len
     unsigned char *cursor = NULL;
     em_vendor_data_t *data = NULL;
 
+    if (buff == NULL) {
+        em_printfout("ERROR: handle_policy_cfg_req received NULL buffer");
+        return -1;
+    }
+
+    const unsigned int hdr_len = sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t);
+    if (len < hdr_len + sizeof(em_tlv_t)) {
+        em_printfout("ERROR: handle_policy_cfg_req received buffer too short: len=%u, expected at least %u",
+                    len, hdr_len + sizeof(em_tlv_t));
+        return -1;
+    }
     // Start from last applied policy so that absent TLVs retain their
     // existing values instead of being zeroed out.
     static em_policy_cfg_params_t last_policy = {};
@@ -761,23 +772,70 @@ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len
         if (tlv->type == em_tlv_type_steering_policy) {
             data_len = 0; // reset per-TLV offset
             em_steering_policy_sta_t *steer_pol_sta = reinterpret_cast<em_steering_policy_sta_t *> (tlv->value);
+            size_t tlv_payload_len = ntohs(tlv->len);
+            size_t required_len = sizeof(steer_pol_sta->num_sta) + (steer_pol_sta->num_sta * sizeof(mac_addr_t));
+            if (required_len > tlv_payload_len) {
+                em_printfout("%s:%d Truncated steering policy TLV",
+                            __func__, __LINE__);
+                return -1;
+            }
+            if (steer_pol_sta->num_sta > EM_MAX_STA_PER_AGENT) {
+                em_printfout("%s:%d Invalid steering STA count %u",
+                            __func__, __LINE__,
+                            steer_pol_sta->num_sta);
+                return -1;
+            }
+            if (data_len >= tlv_payload_len) {
+                em_printfout("%s:%d Invalid steering policy offset",
+                            __func__, __LINE__);
+                return -1;
+            }
             policy.steering_policy.local_steer_policy.num_sta = steer_pol_sta->num_sta;
             for(i = 0; i < steer_pol_sta->num_sta; i++) {
                 memcpy(policy.steering_policy.local_steer_policy.sta_mac[i], steer_pol_sta->sta_mac[i], sizeof(mac_address_t));
             }
             data_len += sizeof(steer_pol_sta->num_sta) + (sizeof(mac_addr_t) * steer_pol_sta->num_sta);
+            if (data_len + sizeof(decltype(em_steering_policy_sta_t::num_sta)) > tlv_payload_len) {
+                em_printfout("%s:%d Truncated BTM steering policy",
+                            __func__, __LINE__);
+                return -1;
+            }
 
             em_steering_policy_sta_t *btm_steer_pol = reinterpret_cast<em_steering_policy_sta_t *> (tlv->value + data_len);
+            if (btm_steer_pol->num_sta > EM_MAX_STA_PER_AGENT) {
+                em_printfout("%s:%d Invalid BTM steering STA count %u",
+                            __func__, __LINE__,
+                            btm_steer_pol->num_sta);
+                return -1;
+            }
             policy.steering_policy.btm_steer_policy.num_sta = btm_steer_pol->num_sta;
             for(i = 0; i < btm_steer_pol->num_sta; i++) {
                 memcpy(policy.steering_policy.btm_steer_policy.sta_mac[i], btm_steer_pol->sta_mac[i], sizeof(mac_address_t));
             }
             data_len += sizeof(btm_steer_pol->num_sta) + (sizeof(mac_addr_t) * btm_steer_pol->num_sta);
 
+            if (data_len + sizeof(unsigned char) > tlv_payload_len) {
+                em_printfout("%s:%d Missing steering radio count",
+                            __func__, __LINE__);
+                return -1;
+            }
             policy.steering_policy.radio_num = *(tlv->value + data_len);
+            if (policy.steering_policy.radio_num > EM_MAX_RADIO_PER_AGENT) {
+                em_printfout("%s:%d Invalid steering radio count %u",
+                            __func__, __LINE__,
+                            policy.steering_policy.radio_num);
+                return -1;
+            }
             data_len += sizeof(unsigned char);
 
             em_steering_policy_radio_t *radio_steer_pol = reinterpret_cast<em_steering_policy_radio_t *> (tlv->value + data_len);
+
+            size_t radio_bytes = policy.steering_policy.radio_num * sizeof(em_steering_policy_radio_t);
+            if (data_len + radio_bytes > tlv_payload_len) {
+                em_printfout("%s:%d Truncated steering radio list",
+                            __func__, __LINE__);
+                return -1;
+            }
             for(i = 0; i < policy.steering_policy.radio_num; i++) {
                 memcpy(&policy.steering_policy.radio_steer_policy[i], &radio_steer_pol[i], sizeof(em_steering_policy_radio_t));
             }
@@ -789,8 +847,20 @@ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len
 
             // Only overwrite radios if the TLV actually carries radio entries;
             // otherwise keep the previously cached per-radio policies (from last_policy).
+            if (metrics->radios_num > EM_MAX_RADIO_PER_AGENT) {
+                em_printfout("%s:%d Invalid radios_num %u",
+                            __func__, __LINE__,
+                            metrics->radios_num);
+                return -1;
+            }
             if (metrics->radios_num > 0) {
                 policy.metrics_policy.radios_num = metrics->radios_num;
+                size_t required_len = (2 * sizeof(unsigned char)) + (metrics->radios_num * sizeof(em_metric_rprt_policy_radio_t));
+                if (required_len > ntohs(tlv->len)) {
+                    em_printfout("%s:%d Truncated metric policy TLV",
+                                __func__, __LINE__);
+                    return -1;
+                }
                 for(i = 0; i < metrics->radios_num; i++) {
                     em_metric_rprt_policy_radio_t *radio = &metrics->radios[i];
                     memcpy(&policy.metrics_policy.radios[i], radio, sizeof(em_metric_rprt_policy_radio_t));
@@ -807,17 +877,32 @@ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len
                     policy.def_8021q_settings.primary_vlan_id, policy.def_8021q_settings.default_pcp);
             }
         } else if (tlv->type == em_tlv_type_traffic_separation_policy) {
+            if (ntohs(tlv->len) < sizeof(unsigned char)) {
+                em_printfout("%s:%d Invalid traffic separation TLV",
+                            __func__, __LINE__);
+                return -1;
+            }
             unsigned char *tmp = static_cast<unsigned char *>(tlv->value);
             policy.traffic_separation_policy.ssids_num = *tmp;
 	        if(policy.traffic_separation_policy.ssids_num <= em_haul_type_max) {
             	tmp += sizeof(unsigned char);
             	data_len += sizeof(unsigned char);
             	for ( i = 0; i < policy.traffic_separation_policy.ssids_num ; i++ ) {
+                    if (data_len + sizeof(unsigned char) > ntohs(tlv->len)) {
+                        em_printfout("%s:%d Missing SSID length field",
+                                    __func__, __LINE__);
+                        return -1;
+                    }
                     size_t ssid_len = *tmp;
                     tmp += sizeof(unsigned char);
                     data_len += sizeof(unsigned char);
 		
 		            if(ssid_len <= MAX_SSID_NAME_LEN) {
+                        if (data_len + ssid_len + sizeof(unsigned short) > ntohs(tlv->len)) {
+                            em_printfout("ERROR: Traffic Separation Policy TLV is malformed: expected more data for SSID[%u] (ssid_len=%zu, data_len=%zu, tlv_len=%u)",
+                                        i, ssid_len, data_len, ntohs(tlv->len));
+                            return -1;
+                        }
                         memcpy(policy.traffic_separation_policy.ssids[i].ssid, tmp, ssid_len);
                         policy.traffic_separation_policy.ssids[i].ssid[ssid_len] = '\0';
                         policy.traffic_separation_policy.ssids[i].ssid_len = ssid_len ;
@@ -882,18 +967,42 @@ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len
                 unsigned char *qos_data = tlv->value;
                 size_t qos_offset = 0;
 
+                if (ntohs(tlv->len) < sizeof(unsigned char)) {
+                    em_printfout("%s:%d Invalid QoS TLV",
+                                __func__, __LINE__);
+                    return -1;
+                }
                 unsigned char mscs_num = qos_data[qos_offset++];
                 mscs_num = (mscs_num < EM_MAX_STA_PER_AGENT) ? mscs_num : EM_MAX_STA_PER_AGENT;
                 policy.qos_mgmt_policy[q_cnt].mscs_disallowed_num = mscs_num;
+                size_t required_len = qos_offset + (mscs_num * sizeof(mac_address_t));
+                if (required_len > ntohs(tlv->len)) {
+                    em_printfout("%s:%d Truncated MSCS list",
+                                __func__, __LINE__);
+                    return -1;
+                }
                 for (unsigned int idx = 0; idx < mscs_num; idx++) {
                     memcpy(policy.qos_mgmt_policy[q_cnt].mac_addr_mscs_disallowed[idx].sta_mac_addr,
                         qos_data + qos_offset, sizeof(mac_address_t));
                     qos_offset += sizeof(mac_address_t);
                 }
 
+                if (qos_offset + sizeof(unsigned char) > ntohs(tlv->len)) {
+                    em_printfout("%s:%d Missing SCS count",
+                                __func__, __LINE__);
+                    return -1;
+                }
                 unsigned char scs_num = qos_data[qos_offset++];
                 scs_num = (scs_num < EM_MAX_STA_PER_AGENT) ? scs_num : EM_MAX_STA_PER_AGENT;
                 policy.qos_mgmt_policy[q_cnt].scs_disallowed_num = scs_num;
+
+                required_len = qos_offset + (scs_num * sizeof(mac_address_t));
+                if (required_len > ntohs(tlv->len)) {
+                    em_printfout("%s:%d Truncated SCS list",
+                                __func__, __LINE__);
+                    return -1;
+                }
+
                 for (unsigned int idx = 0; idx < scs_num; idx++) {
                     memcpy(policy.qos_mgmt_policy[q_cnt].mac_addr_scs_disallowed[idx].sta_mac_addr,
                         qos_data + qos_offset, sizeof(mac_address_t));
@@ -907,6 +1016,11 @@ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len
                     policy.qos_mgmt_policy[q_cnt].scs_disallowed_num);
             }
         } else if (tlv->type == em_tlv_type_vendor_specific) {
+            if (ntohs(tlv->len) < sizeof(em_vendor_specific_t)) {
+                em_printfout("%s:%d Invalid vendor TLV length",
+                            __func__, __LINE__);
+                return -1;
+            }
             em_vendor_specific_t *vendor_tlv = reinterpret_cast<em_vendor_specific_t *> (tlv->value);
             em_printfout("Recvd vendor tlv, num: %d and tlv->len:%d", vendor_tlv->num, ntohs(tlv->len));
             if ((vendor_tlv->num <= 0) || (ntohs(tlv->len) == 0)) {
@@ -914,16 +1028,54 @@ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len
             }
 
             cursor = reinterpret_cast<unsigned char *> (vendor_tlv->data);
+            unsigned char *vendor_end = reinterpret_cast<unsigned char *>(tlv->value) + ntohs(tlv->len);
             for(int i = 0; i < vendor_tlv->num; i++)
             {
+                if ((cursor + sizeof(em_vendor_data_t::attr_id)) > vendor_end) {
+                    em_printfout("%s:%d Vendor attribute truncated",
+                                __func__, __LINE__);
+                    return -1;
+                }
                 data = reinterpret_cast<em_vendor_data_t *> (cursor);
                 em_printfout("vendor attr id is: %d", data->attr_id);
                 if (data->attr_id == vendor_ext_attr_id_policy_sta_marker) {
-                    strncpy(policy.vendor_policy.managed_client_marker, reinterpret_cast<const char *>(data->vendor_data), strlen(reinterpret_cast<char *> (data->vendor_data)) + 1);
-                    em_printfout(" Recvd sta marker: %s", policy.vendor_policy.managed_client_marker);
-                    cursor += sizeof(data->attr_id) + strlen(reinterpret_cast<char *> (data->vendor_data)) + 1;
+                    unsigned char *payload = reinterpret_cast<unsigned char *>(data->vendor_data);
+                    if (payload >= vendor_end) {
+                        em_printfout("%s:%d Invalid vendor payload",
+                                    __func__, __LINE__);
+                        return -1;
+                    }
+
+                    size_t remaining_len = static_cast<size_t>(vendor_end - payload);
+                    size_t marker_len = strnlen(reinterpret_cast<char *>(payload), remaining_len);
+                    if (marker_len == remaining_len) {
+                        em_printfout("%s:%d Missing marker terminator",
+                                    __func__, __LINE__);
+                        return -1;
+                    }
+                    if (marker_len >= sizeof(policy.vendor_policy.managed_client_marker)) {
+                        em_printfout("%s:%d Invalid marker length %zu",
+                                    __func__, __LINE__, marker_len);
+                        return -1;
+                    }
+
+                    memcpy(policy.vendor_policy.managed_client_marker, payload, marker_len);
+                    policy.vendor_policy.managed_client_marker[marker_len] = '\0';
+                    em_printfout("Recvd sta marker: %s", policy.vendor_policy.managed_client_marker);
+
+                    cursor += sizeof(data->attr_id) + marker_len + 1;
+                    if (cursor > vendor_end) {
+                        em_printfout("%s:%d Vendor attribute exceeds TLV bounds",
+                                    __func__, __LINE__);
+                        return -1;
+                    }
                 } else if (data->attr_id == vendor_ext_attr_id_policy_alarm) {
                     em_link_stats_alarm_cfg_t *vendor = reinterpret_cast<em_link_stats_alarm_cfg_t *> (data->vendor_data);
+                    if ((reinterpret_cast<unsigned char *>(vendor) + sizeof(em_link_stats_alarm_cfg_t)) > vendor_end) {
+                        em_printfout("%s:%d Truncated alarm config",
+                                    __func__, __LINE__);
+                        return -1;
+                    }
                     memcpy(&policy.vendor_policy.link_stats_alarm_policy_cfg, vendor, sizeof(em_link_stats_alarm_cfg_t));
 
                     em_printfout(" Recvd link stats alarm cfg, collection_start_time : %s ", policy.vendor_policy.link_stats_alarm_policy_cfg.collection_start_time);
@@ -933,6 +1085,11 @@ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len
                     cursor += sizeof(data->attr_id) + sizeof(em_link_stats_alarm_cfg_t);
                 } else if (data->attr_id == vendor_ext_attr_id_policy_cfg_client_filter) {
                     em_client_filters_cfg_t *vendor = reinterpret_cast<em_client_filters_cfg_t *> (data->vendor_data);
+                    if ((reinterpret_cast<unsigned char *>(vendor) + sizeof(em_client_filters_cfg_t)) > vendor_end) {
+                        em_printfout("%s:%d Truncated client filters config",
+                                    __func__, __LINE__);
+                        return -1;
+                    }
                     memcpy(&policy.vendor_policy.client_filters_policy_cfg, vendor, sizeof(em_client_filters_cfg_t));
 
                     em_printfout(" Recvd client filters cfg, sta_mac : %s ", util::mac_to_string(
@@ -943,12 +1100,25 @@ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len
                     cursor += sizeof(data->attr_id) + sizeof(em_client_filters_cfg_t);
                 } else {
                     em_printfout(" Unknown vendor attr id: %d ", data->attr_id);
-                    break;
+                    return -1;
+                }
+                if (cursor > vendor_end) {
+                    em_printfout("%s:%d Vendor TLV boundary exceeded",
+                                __func__, __LINE__);
+                    return -1;
                 }
             }
         }
 
-        tlv_len -= static_cast<unsigned int> (sizeof(em_tlv_t) + static_cast<size_t> (ntohs(tlv->len)));
+        size_t current_tlv_size = sizeof(em_tlv_t) + ntohs(tlv->len);
+        if (current_tlv_size > tlv_len) {
+            em_printfout("%s:%d Invalid TLV length %zu",
+                        __func__, __LINE__,
+                        current_tlv_size);
+            return -1;
+        }
+
+        tlv_len -= static_cast<unsigned int> (current_tlv_size);
         tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + sizeof(em_tlv_t) + ntohs(tlv->len));
     }
 
