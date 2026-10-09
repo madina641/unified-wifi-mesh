@@ -795,7 +795,7 @@ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len
                 memcpy(policy.steering_policy.local_steer_policy.sta_mac[i], steer_pol_sta->sta_mac[i], sizeof(mac_address_t));
             }
             data_len += sizeof(steer_pol_sta->num_sta) + (sizeof(mac_addr_t) * steer_pol_sta->num_sta);
-            if (data_len + sizeof(((em_steering_policy_sta_t *)0)->num_sta) > tlv_payload_len) {
+            if (data_len + sizeof(decltype(em_steering_policy_sta_t::num_sta)) > tlv_payload_len) {
                 em_printfout("%s:%d Truncated BTM steering policy",
                             __func__, __LINE__);
                 return -1;
@@ -820,7 +820,7 @@ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len
                 return -1;
             }
             policy.steering_policy.radio_num = *(tlv->value + data_len);
-            if (policy.steering_policy.radio_num > EM_MAX_RADIOS_PER_AGENT) {
+            if (policy.steering_policy.radio_num > EM_MAX_RADIO_PER_AGENT) {
                 em_printfout("%s:%d Invalid steering radio count %u",
                             __func__, __LINE__,
                             policy.steering_policy.radio_num);
@@ -847,7 +847,7 @@ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len
 
             // Only overwrite radios if the TLV actually carries radio entries;
             // otherwise keep the previously cached per-radio policies (from last_policy).
-            if (metrics->radios_num > EM_MAX_RADIOS_PER_AGENT) {
+            if (metrics->radios_num > EM_MAX_RADIO_PER_AGENT) {
                 em_printfout("%s:%d Invalid radios_num %u",
                             __func__, __LINE__,
                             metrics->radios_num);
