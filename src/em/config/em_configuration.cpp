@@ -4825,7 +4825,24 @@ int em_configuration_t::handle_wsc_m2(unsigned char *buff, unsigned int len, uns
 
     em_printfout("Parsing m2 message, index: %d, len: %d", index, len);
 
-    m_m2_length = len - 12;
+    const size_t authenticator_attr_len =
+        sizeof(data_elem_attr_t) + AUTHENTICATOR_LEN;
+
+    if (buff == nullptr || len < authenticator_attr_len) {
+        em_printfout("%s:%d Invalid M2 length %u",
+                     __func__, __LINE__, len);
+        return -1;
+    }
+
+    const size_t m2_copy_len = len - authenticator_attr_len;
+    if (m2_copy_len > sizeof(m_m2_msg)) {
+        em_printfout("%s:%d M2 copy length %zu exceeds buffer %zu",
+                     __func__, __LINE__,
+                     m2_copy_len, sizeof(m_m2_msg));
+        return -1;
+    }
+
+    m_m2_length = m2_copy_len;
     memcpy(m_m2_msg, buff, m_m2_length);
     
     attr = reinterpret_cast<data_elem_attr_t *> (buff); tmp_len = len;
@@ -4888,6 +4905,15 @@ int em_configuration_t::handle_wsc_m1(unsigned char *buff, unsigned int len)
 		printf("%s:%d Failed to find the radio\n", __func__, __LINE__);
 		return -1;
 	}
+    if (buff == nullptr ||
+        len < sizeof(data_elem_attr_t) ||
+        len > sizeof(m_m1_msg)) {
+        em_printfout("%s:%d Invalid M1 length %u (max=%zu)",
+                     __func__, __LINE__,
+                     len, sizeof(m_m1_msg));
+        return -1;
+    }
+
     m_m1_length = len;
     memcpy(m_m1_msg, buff, m_m1_length);
     
@@ -5028,7 +5054,10 @@ int em_configuration_t::handle_autoconfig_wsc_m2(unsigned char *buff, unsigned i
             em_printfout("Handle wsc TLV, count: %d", wsc_tlv_count);
             //Storing m2 address and length in static variable;
             set_e_mac(get_radio_interface_mac());
-            handle_wsc_m2(tlv->value, val_len, wsc_tlv_count);
+            if (handle_wsc_m2(tlv->value, val_len, wsc_tlv_count) < 0) {
+                em_printfout("Invalid WSC M2 TLV");
+                return -1;
+            }
 
             // first compute keys
             if (compute_keys(get_r_public(), static_cast<short unsigned int> (get_r_public_len()), get_e_private(), static_cast<short unsigned int> (get_e_private_len())) != 1) {
@@ -6456,7 +6485,10 @@ int em_configuration_t::handle_autoconfig_wsc_m1(unsigned char *buff, unsigned i
         if (tlv->type == em_tlv_type_ap_radio_basic_cap) {
             handle_ap_radio_basic_cap(tlv->value, val_len);
         } else if (tlv->type == em_tlv_type_wsc) {
-            handle_wsc_m1(tlv->value, val_len);
+            if (handle_wsc_m1(tlv->value, val_len) < 0) {
+                em_printfout("Invalid WSC M1 TLV");
+                return -1;
+            }
         } else if (tlv->type == em_tlv_type_profile_2_ap_cap) {
         } else if (tlv->type == em_tlv_type_ap_radio_advanced_cap) {
             handle_ap_radio_advanced_cap(tlv->value, val_len);
