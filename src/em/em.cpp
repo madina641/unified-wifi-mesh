@@ -302,10 +302,23 @@ void em_t::proto_process(unsigned char *data, unsigned int len)
     em_cmdu_t *cmdu;
     mac_addr_str_t mac_str;
 
-    cmdu = reinterpret_cast<em_cmdu_t *>(data + sizeof(em_raw_hdr_t));
+    const unsigned int header_len =
+        static_cast<unsigned int>(
+            sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
 
+    if (data == NULL || len < header_len) {
+        em_printfout(
+            "%s:%d Invalid protocol message length %u",
+            __func__, __LINE__, len);
+        free(data);
+        return;
+    }
 
-    dm_easy_mesh_t::macbytes_to_string(get_radio_interface_mac(), mac_str);
+    cmdu = reinterpret_cast<em_cmdu_t *>(
+        data + sizeof(em_raw_hdr_t));
+
+    dm_easy_mesh_t::macbytes_to_string(
+        get_radio_interface_mac(), mac_str);
     switch (htons(cmdu->type)) {
         case em_msg_type_autoconf_search:
         case em_msg_type_autoconf_resp:
